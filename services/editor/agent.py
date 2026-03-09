@@ -1,18 +1,19 @@
 """Editor Agent — assembles all pipeline outputs into a polished AI news briefing."""
 
-import json
-import os
+import logging
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 
-import httpx
-from acp_sdk.models import Message, MessagePart
+from acp_sdk.models import Message
 from acp_sdk.server import Context, RunYield, RunYieldResume, Server
 
-server = Server()
+from shared import OllamaClient, error_response, markdown_response, parse_json_input
 
-OLLAMA_PROXY_URL = os.getenv("OLLAMA_PROXY_URL", "http://ollama-proxy:8080")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+server = Server()
+ollama = OllamaClient()
 
 
 async def compose_briefing(articles: list[dict]) -> str:
@@ -44,14 +45,7 @@ Structure the report as:
 
 Output the full Markdown report:"""
 
-    async with httpx.AsyncClient(base_url=OLLAMA_PROXY_URL, timeout=300) as client:
-        response = await client.post("/api/generate", json={
-            "model": OLLAMA_MODEL,
-            "prompt": prompt,
-            "stream": False,
-        })
-        result = response.json()
-        return result.get("response", "")
+    return await ollama.generate(prompt)
 
 
 @server.agent()
@@ -60,32 +54,17 @@ async def editor(
 ) -> AsyncGenerator[RunYield, RunYieldResume]:
     """Assembles analyzed articles into a polished daily AI news briefing report."""
 
-    articles_json = ""
-    for message in input:
-        for part in message.parts:
-            articles_json += part.content
-
     yield {"thought": "Parsing analyzed articles..."}
-
-    try:
-        articles = json.loads(articles_json)
-    except json.JSONDecodeError:
-        yield Message(
-            role="agent",
-            parts=[MessagePart(content="Error: Invalid JSON input", content_type="text/plain")],
-        )
+    articles, err = parse_json_input(input)
+    if err:
+        yield error_response(err)
         return
 
     yield {"thought": f"Composing briefing from {len(articles)} articles..."}
-
     briefing = await compose_briefing(articles)
 
     yield {"thought": "Briefing complete!"}
-
-    yield Message(
-        role="agent",
-        parts=[MessagePart(content=briefing, content_type="text/markdown")],
-    )
+    yield markdown_response(briefing)
 
 
 server.run(host="0.0.0.0", port=8000)

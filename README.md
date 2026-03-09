@@ -96,12 +96,12 @@ Ollama processes one inference request at a time. When multiple agents call Olla
 
 ## The Agents
 
-| Agent | Port | Input | Output | What It Does |
-|---|---|---|---|---|
-| **Topic Scout** | 8001 | Trigger request | JSON array of articles | Fetches RSS feeds (ArXiv, Google News), parses entries, and uses Ollama to rank the top 5 trending AI topics |
-| **Summarizer** | 8002 | JSON array of articles | JSON array with summaries | Takes each article and generates a concise 2-3 sentence summary via Ollama |
-| **Sentiment Analyzer** | 8003 | JSON array with summaries | JSON array with sentiment + themes | Classifies sentiment (positive/negative/neutral) and extracts keyword themes for each article |
-| **Editor** | 8004 | JSON array with full analysis | Markdown report | Assembles all data into a polished daily AI news briefing with executive summary and theme highlights |
+| Agent                  | Port | Input                         | Output                             | What It Does                                                                                                 |
+|------------------------|------|-------------------------------|------------------------------------|--------------------------------------------------------------------------------------------------------------|
+| **Topic Scout**        | 8001 | Trigger request               | JSON array of articles             | Fetches RSS feeds (ArXiv, Google News), parses entries, and uses Ollama to rank the top 5 trending AI topics |
+| **Summarizer**         | 8002 | JSON array of articles        | JSON array with summaries          | Takes each article and generates a concise 2-3 sentence summary via Ollama                                   |
+| **Sentiment Analyzer** | 8003 | JSON array with summaries     | JSON array with sentiment + themes | Classifies sentiment (positive/negative/neutral) and extracts keyword themes for each article                |
+| **Editor**             | 8004 | JSON array with full analysis | Markdown report                    | Assembles all data into a polished daily AI news briefing with executive summary and theme highlights        |
 
 Each agent is a standalone Python service built with the [acp-sdk](https://pypi.org/project/acp-sdk/) and runs in its own Docker container.
 
@@ -111,12 +111,12 @@ Each agent is a standalone Python service built with the [acp-sdk](https://pypi.
 
 Before you begin, make sure you have:
 
-| Requirement | Version | Why |
-|----|----|----|
-| [Docker Desktop](https://docs.docker.com/get-docker/) | 4.0+ | Runs all agent containers and Ollama |
-| [Python](https://www.python.org/downloads/) | 3.11+ | Runs the local orchestrator script |
-| Free RAM | ~4GB minimum | Ollama needs memory for the LLM model |
-| Free Disk | ~5GB | For Docker images + Ollama model weights |
+| Requirement                                           | Version      | Why                                      |
+|-------------------------------------------------------|--------------|------------------------------------------|
+| [Docker Desktop](https://docs.docker.com/get-docker/) | 4.0+         | Runs all agent containers and Ollama     |
+| [Python](https://www.python.org/downloads/)           | 3.11+        | Runs the local orchestrator script       |
+| Free RAM                                              | ~4GB minimum | Ollama needs memory for the LLM model    |
+| Free Disk                                             | ~5GB         | For Docker images + Ollama model weights |
 
 ---
 
@@ -143,11 +143,11 @@ OLLAMA_MODEL=llama3.2
 
 **Available models:**
 
-| Model | Download Size | Speed | Quality | Best For |
-|---|---|---|---|---|
-| `llama3.2:1b` | ~1.3 GB | Fast | Lower | Quick testing, low-RAM machines |
-| `llama3.2` | ~3.8 GB | Medium | Good | **Default — recommended** |
-| `llama3.1:8b` | ~4.7 GB | Slower | Better | Higher quality output |
+| Model         | Download Size | Speed  | Quality | Best For                        |
+|---------------|---------------|--------|---------|---------------------------------|
+| `llama3.2:1b` | ~1.3 GB       | Fast   | Lower   | Quick testing, low-RAM machines |
+| `llama3.2`    | ~3.8 GB       | Medium | Good    | **Default — recommended**       |
+| `llama3.1:8b` | ~4.7 GB       | Slower | Better  | Higher quality output           |
 
 ### 3. Set up the local orchestrator
 
@@ -304,17 +304,17 @@ acp-skilled-worker/
 
 All configuration is through environment variables in `.env`:
 
-| Variable | Default | Description |
-|---|---|---|
+| Variable       | Default    | Description                                   |
+|----------------|------------|-----------------------------------------------|
 | `OLLAMA_MODEL` | `llama3.2` | The Ollama model all agents use for inference |
 
 These are set internally in `docker-compose.yml` and generally don't need changing:
 
-| Variable | Default | Description |
-|---|---|---|
-| `OLLAMA_URL` | `http://ollama:11434` | Ollama server URL (used by the proxy) |
-| `OLLAMA_PROXY_URL` | `http://ollama-proxy:8080` | Proxy URL (used by agents) |
-| `REQUEST_TIMEOUT` | `120` | Max seconds per Ollama request |
+| Variable           | Default                    | Description                           |
+|--------------------|----------------------------|---------------------------------------|
+| `OLLAMA_URL`       | `http://ollama:11434`      | Ollama server URL (used by the proxy) |
+| `OLLAMA_PROXY_URL` | `http://ollama-proxy:8080` | Proxy URL (used by agents)            |
+| `REQUEST_TIMEOUT`  | `120`                      | Max seconds per Ollama request        |
 
 ---
 
@@ -364,11 +364,11 @@ curl -s -X POST http://localhost:8001/runs \
 
 **Agent endpoints reference:**
 
-| Endpoint | Method | Description |
-|---|---|---|
-| `/agents` | GET | List registered agents and their metadata |
-| `/runs` | POST | Create a new run (execute an agent) |
-| `/runs/{run_id}` | GET | Check the status of a run |
+| Endpoint         | Method | Description                               |
+|------------------|--------|-------------------------------------------|
+| `/agents`        | GET    | List registered agents and their metadata |
+| `/runs`          | POST   | Create a new run (execute an agent)       |
+| `/runs/{run_id}` | GET    | Check the status of a run                 |
 
 ---
 

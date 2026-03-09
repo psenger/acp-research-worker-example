@@ -1,17 +1,18 @@
 """Summarizer Agent — condenses articles into concise summaries."""
 
-import json
-import os
+import logging
 from collections.abc import AsyncGenerator
 
-import httpx
-from acp_sdk.models import Message, MessagePart
+from acp_sdk.models import Message
 from acp_sdk.server import Context, RunYield, RunYieldResume, Server
 
-server = Server()
+from shared import OllamaClient, error_response, json_response, parse_json_input
 
-OLLAMA_PROXY_URL = os.getenv("OLLAMA_PROXY_URL", "http://ollama-proxy:8080")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+server = Server()
+ollama = OllamaClient()
 
 
 async def summarize_article(title: str, text: str) -> str:
@@ -23,14 +24,7 @@ Content: {text}
 
 Summary:"""
 
-    async with httpx.AsyncClient(base_url=OLLAMA_PROXY_URL, timeout=300) as client:
-        response = await client.post("/api/generate", json={
-            "model": OLLAMA_MODEL,
-            "prompt": prompt,
-            "stream": False,
-        })
-        result = response.json()
-        return result.get("response", "")
+    return await ollama.generate(prompt)
 
 
 @server.agent()
@@ -39,21 +33,10 @@ async def summarizer(
 ) -> AsyncGenerator[RunYield, RunYieldResume]:
     """Takes article data and produces concise summaries for each article."""
 
-    # Extract articles from input
-    articles_json = ""
-    for message in input:
-        for part in message.parts:
-            articles_json += part.content
-
     yield {"thought": "Parsing articles..."}
-
-    try:
-        articles = json.loads(articles_json)
-    except json.JSONDecodeError:
-        yield Message(
-            role="agent",
-            parts=[MessagePart(content=json.dumps({"error": "Invalid JSON input"}), content_type="application/json")],
-        )
+    articles, err = parse_json_input(input)
+    if err:
+        yield error_response(err)
         return
 
     yield {"thought": f"Summarizing {len(articles)} articles..."}
@@ -71,10 +54,7 @@ async def summarizer(
         })
         yield {"thought": f"Summarized: {title[:50]}..."}
 
-    yield Message(
-        role="agent",
-        parts=[MessagePart(content=json.dumps(summaries, indent=2), content_type="application/json")],
-    )
+    yield json_response(summaries)
 
 
 server.run(host="0.0.0.0", port=8000)

@@ -40,7 +40,9 @@ services:
       retries: 5
 
   topic-scout:
-    build: ./services/topic-scout
+    build:
+      context: ./services
+      dockerfile: topic-scout/Dockerfile
     ports:
       - "8001:8000"
     mem_limit: 512m
@@ -53,7 +55,9 @@ services:
         condition: service_healthy
 
   summarizer:
-    build: ./services/summarizer
+    build:
+      context: ./services
+      dockerfile: summarizer/Dockerfile
     ports:
       - "8002:8000"
     mem_limit: 256m
@@ -66,7 +70,9 @@ services:
         condition: service_healthy
 
   sentiment-analyzer:
-    build: ./services/sentiment-analyzer
+    build:
+      context: ./services
+      dockerfile: sentiment-analyzer/Dockerfile
     ports:
       - "8003:8000"
     mem_limit: 256m
@@ -79,7 +85,9 @@ services:
         condition: service_healthy
 
   editor:
-    build: ./services/editor
+    build:
+      context: ./services
+      dockerfile: editor/Dockerfile
     ports:
       - "8004:8000"
     mem_limit: 256m
