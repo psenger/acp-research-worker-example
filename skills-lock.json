@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "python-project-structure": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "2f4f560964af8ecad4d54666c044baa54671d0abd1136c848b539befe24db170"
+    }
+  }
+}

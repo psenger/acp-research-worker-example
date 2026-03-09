@@ -1,0 +1,83 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Uncomment for GPU support:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  ollama-proxy:
+    build: ./services/ollama-proxy
+    ports:
+      - "8080:8080"
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - REQUEST_TIMEOUT=120
+    depends_on:
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  topic-scout:
+    build: ./services/topic-scout
+    ports:
+      - "8001:8000"
+    environment:
+      - OLLAMA_PROXY_URL=http://ollama-proxy:8080
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2}
+    depends_on:
+      ollama-proxy:
+        condition: service_healthy
+
+  summarizer:
+    build: ./services/summarizer
+    ports:
+      - "8002:8000"
+    environment:
+      - OLLAMA_PROXY_URL=http://ollama-proxy:8080
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2}
+    depends_on:
+      ollama-proxy:
+        condition: service_healthy
+
+  sentiment-analyzer:
+    build: ./services/sentiment-analyzer
+    ports:
+      - "8003:8000"
+    environment:
+      - OLLAMA_PROXY_URL=http://ollama-proxy:8080
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2}
+    depends_on:
+      ollama-proxy:
+        condition: service_healthy
+
+  editor:
+    build: ./services/editor
+    ports:
+      - "8004:8000"
+    environment:
+      - OLLAMA_PROXY_URL=http://ollama-proxy:8080
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2}
+    depends_on:
+      ollama-proxy:
+        condition: service_healthy
+
+volumes:
+  ollama-data:
