@@ -1,0 +1,45 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# JetBrains
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+venv/
+.venv/
+env/
+.python-version
+pip-log.txt
+
+# Docker
+docker-compose.override.yml
+.docker/
+
+# Environment
+.env
+
+# AI tooling (local config)
+.claude/
+agent-os/
+CLAUDE.md
+
+# Project
+output/
