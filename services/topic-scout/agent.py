@@ -1,6 +1,7 @@
 """Topic Scout Agent — discovers trending AI news from RSS feeds."""
 
 import json
+import logging
 import os
 from collections.abc import AsyncGenerator
 
@@ -8,6 +9,9 @@ import feedparser
 import httpx
 from acp_sdk.models import Message, MessagePart
 from acp_sdk.server import Context, RunYield, RunYieldResume, Server
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 server = Server()
 
@@ -17,7 +21,7 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
 RSS_FEEDS = [
     "https://hnrss.org/newest?q=AI+OR+LLM+OR+%22artificial+intelligence%22&count=20",
     "https://rss.arxiv.org/rss/cs.AI",
-    "https://feeds.feedburner.com/venturebeat/SZYF",
+    "https://news.google.com/rss/search?q=artificial+intelligence&hl=en-US&gl=US&ceid=US:en",
 ]
 
 
@@ -25,8 +29,12 @@ def fetch_rss_articles() -> list[dict]:
     """Fetch articles from configured RSS feeds."""
     articles = []
     for feed_url in RSS_FEEDS:
+        logger.info(f"Fetching feed: {feed_url}")
         try:
             feed = feedparser.parse(feed_url)
+            logger.info(f"  Feed status: {feed.get('status', 'unknown')}, entries: {len(feed.entries)}")
+            if feed.bozo:
+                logger.warning(f"  Feed parse error: {feed.bozo_exception}")
             for entry in feed.entries[:10]:
                 articles.append({
                     "title": entry.get("title", ""),
@@ -34,13 +42,19 @@ def fetch_rss_articles() -> list[dict]:
                     "summary": entry.get("summary", "")[:500],
                     "source": feed.feed.get("title", feed_url),
                 })
-        except Exception:
+        except Exception as e:
+            logger.error(f"  Failed to fetch feed: {e}")
             continue
+    logger.info(f"Total articles fetched: {len(articles)}")
     return articles
 
 
 async def rank_articles(articles: list[dict]) -> str:
     """Use Ollama to rank and filter the most relevant AI trending topics."""
+    if not articles:
+        logger.warning("No articles to rank")
+        return "[]"
+
     articles_text = "\n".join(
         f"- {a['title']} ({a['source']}): {a['summary'][:200]}"
         for a in articles[:30]
@@ -54,14 +68,17 @@ Articles:
 
 Return ONLY valid JSON, no other text."""
 
-    async with httpx.AsyncClient(base_url=OLLAMA_PROXY_URL, timeout=120) as client:
+    async with httpx.AsyncClient(base_url=OLLAMA_PROXY_URL, timeout=300) as client:
+        logger.info("Calling Ollama to rank articles...")
         response = await client.post("/api/generate", json={
             "model": OLLAMA_MODEL,
             "prompt": prompt,
             "stream": False,
         })
         result = response.json()
-        return result.get("response", "[]")
+        llm_response = result.get("response", "[]")
+        logger.info(f"Ollama response length: {len(llm_response)}")
+        return llm_response
 
 
 @server.agent()
@@ -74,6 +91,14 @@ async def topic_scout(
 
     articles = fetch_rss_articles()
 
+    if not articles:
+        yield {"thought": "No articles found from RSS feeds. Returning empty result."}
+        yield Message(
+            role="agent",
+            parts=[MessagePart(content="[]", content_type="application/json")],
+        )
+        return
+
     yield {"thought": f"Found {len(articles)} articles. Ranking with LLM..."}
 
     ranked = await rank_articles(articles)
@@ -84,4 +109,4 @@ async def topic_scout(
     )
 
 
-server.run(port=8000)
+server.run(host="0.0.0.0", port=8000)

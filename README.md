@@ -1,166 +1,219 @@
-# ACP Skilled Worker — AI News Pipeline
+# ACP Skilled Worker
 
-A multi-agent demo that uses [ACP (Agent Communication Protocol)](https://agentcommunicationprotocol.dev/) to orchestrate specialized AI agents running in Docker containers. The agents collaborate through [Ollama](https://ollama.com/) to find trending AI news, analyze it, and produce a daily briefing report.
+**A multi-agent AI news pipeline powered by [ACP](https://agentcommunicationprotocol.dev/), [Ollama](https://ollama.com/), and Docker.**
 
-## What It Does
+Four specialized agents — each running in its own container — collaborate to discover trending AI news, summarize articles, analyze sentiment, and produce a polished daily briefing. A local orchestrator drives the pipeline, and a custom proxy solves Ollama's single-request concurrency limitation.
 
-The pipeline runs 4 agents in sequence to produce an AI news briefing:
+---
 
-1. **Topic Scout** — Scrapes RSS feeds (Hacker News, ArXiv, VentureBeat) for AI-related articles, then uses an LLM to rank and select the top 5 trending topics.
-2. **Summarizer** — Takes the selected articles and generates concise 2-3 sentence summaries for each.
-3. **Sentiment Analyzer** — Classifies each article's sentiment (positive/negative/neutral) and extracts key themes.
-4. **Editor** — Assembles all outputs into a polished, formatted Markdown briefing report.
+## Table of Contents
 
-The final report is saved to `output/ai-news-briefing-YYYY-MM-DD.md`.
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [The Agents](#the-agents)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Running the Pipeline](#running-the-pipeline)
+- [Project Structure](#project-structure)
+- [Configuration](#configuration)
+- [GPU Support](#gpu-support)
+- [Interacting with Agents Directly](#interacting-with-agents-directly)
+- [Troubleshooting](#troubleshooting)
+- [How ACP Works](#how-acp-works)
+- [License](#license)
+
+---
+
+## Overview
+
+This project demonstrates how to build a real multi-agent system using the [Agent Communication Protocol (ACP)](https://agentcommunicationprotocol.dev/) — an open standard for agent interoperability developed by the Linux Foundation.
+
+**What happens when you run the pipeline:**
+
+1. The **orchestrator** (a local Python script) sends a task to the first agent
+2. Each agent processes its input, calls Ollama for LLM inference, and returns structured output
+3. Output flows from one agent to the next: discovery, summarization, analysis, editing
+4. The final agent produces a Markdown briefing saved to `output/`
+
+All agent-to-agent communication uses ACP's REST-based protocol (`/agents` for discovery, `/runs` for execution).
+
+---
 
 ## Architecture
 
 ```
-                          ┌──────────────────────┐
-                          │   Local Orchestrator │
-                          │   (orchestrate.py)   │
-                          └──────────┬───────────┘
-                                     │ ACP calls (HTTP)
-                 ┌───────────────────┼──────────────────┐
-                 │                   │                  │
-          ┌──────▼──────┐    ┌───────▼───────┐   ┌──────▼──────┐
-          │ Topic Scout │    │  Summarizer   │   │  Sentiment  │
-          │  :8001      │    │  :8002        │   │  Analyzer   │
-          └──────┬──────┘    └───────┬───────┘   │  :8003      │
-                 │                   │           └──────┬──────┘
-                 │                   │                  │
-                 │           ┌───────▼───────┐          │
-                 │           │    Editor     │◄─────────┘
-                 │           │    :8004      │
-                 │           └───────┬───────┘
-                 │                   │
-                 └─────────┬─────────┘
-                           │ LLM inference
-                    ┌──────▼──────┐
-                    │ Ollama Proxy│
-                    │   :8080     │
-                    └──────┬──────┘
-                           │ serialized requests
-                    ┌──────▼──────┐
-                    │   Ollama    │
-                    │   :11434    │
-                    └─────────────┘
+ YOU
+  │
+  │  python orchestrate.py
+  ▼
+┌────────────────────────────────────────────────────────────────┐
+│                        Local Machine                           │
+│                                                                │
+│  orchestrate.py ─── ACP calls (HTTP) ──┐                       │
+│                                        │                       │
+└────────────────────────────────────────┼───────────────────────┘
+                                         │
+┌────────────────────────────────────────┼───────────────────────┐
+│  Docker Compose Network                │                       │
+│                                        ▼                       │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
+│  │ Topic Scout  │  │  Summarizer  │  │  Sentiment   │          │
+│  │    :8001     │  │    :8002     │  │  Analyzer    │          │
+│  │              │  │              │  │    :8003     │          │
+│  │  RSS feeds   │  │  Condense    │  │              │          │
+│  │  + LLM rank  │  │  articles    │  │  Classify +  │          │
+│  └──────┬───────┘  └──────┬───────┘  │  tag themes  │          │
+│         │                 │          └──────┬───────┘          │
+│         │                 │                 │                  │
+│         │          ┌──────▼───────┐         │                  │
+│         │          │   Editor     │◄────────┘                  │
+│         │          │    :8004     │                            │
+│         │          │              │                            │
+│         │          │  Assemble    │                            │
+│         │          │  briefing    │                            │
+│         │          └──────┬───────┘                            │
+│         │                 │                                    │
+│         └────────┬────────┘                                    │
+│                  │  LLM inference requests                     │
+│           ┌──────▼───────┐                                     │
+│           │ Ollama Proxy │  Serializes concurrent requests     │
+│           │    :8080     │  via asyncio.Semaphore(1)           │
+│           └──────┬───────┘                                     │
+│                  │  One request at a time                      │
+│           ┌──────▼───────┐                                     │
+│           │    Ollama    │  Local LLM inference                │
+│           │   :11434     │  (llama3.2 by default)              │
+│           └──────────────┘                                     │
+│                                                                │
+└────────────────────────────────────────────────────────────────┘
 ```
 
-### How ACP Works Here
+### Why the Ollama Proxy?
 
-Each agent is a standalone Python service using the [acp-sdk](https://pypi.org/project/acp-sdk/). The SDK exposes two key endpoints per agent:
+Ollama processes one inference request at a time. When multiple agents call Ollama concurrently, requests fail or behave unpredictably. The proxy sits between all agents and Ollama, using an `asyncio.Semaphore(1)` to serialize requests — agents submit freely, the proxy queues and forwards one at a time. Agents are unaware of this; they call the proxy exactly as they would call Ollama directly.
 
-- `GET /agents` — Lists available agents and their capabilities
-- `POST /runs` — Executes an agent with input messages and returns output
+---
 
-The orchestrator calls each agent sequentially via these REST endpoints, passing the output of one agent as the input to the next.
+## The Agents
 
-### The Ollama Concurrency Problem
+| Agent | Port | Input | Output | What It Does |
+|---|---|---|---|---|
+| **Topic Scout** | 8001 | Trigger request | JSON array of articles | Fetches RSS feeds (ArXiv, Google News), parses entries, and uses Ollama to rank the top 5 trending AI topics |
+| **Summarizer** | 8002 | JSON array of articles | JSON array with summaries | Takes each article and generates a concise 2-3 sentence summary via Ollama |
+| **Sentiment Analyzer** | 8003 | JSON array with summaries | JSON array with sentiment + themes | Classifies sentiment (positive/negative/neutral) and extracts keyword themes for each article |
+| **Editor** | 8004 | JSON array with full analysis | Markdown report | Assembles all data into a polished daily AI news briefing with executive summary and theme highlights |
 
-Ollama is designed to handle one inference request at a time. When multiple agents try to call Ollama simultaneously, requests can fail or queue unpredictably. The **Ollama Proxy** solves this with an `asyncio.Semaphore(1)` — it accepts requests from all agents but forwards them to Ollama one at a time, queuing the rest. Agents don't need to know about this; they just call the proxy as if it were Ollama.
+Each agent is a standalone Python service built with the [acp-sdk](https://pypi.org/project/acp-sdk/) and runs in its own Docker container.
+
+---
 
 ## Prerequisites
 
-- [Docker Desktop](https://docs.docker.com/get-docker/) (includes Docker Compose)
-- [Python 3.11+](https://www.python.org/downloads/) (for the local orchestrator)
-- ~4GB free RAM for Ollama (more for larger models)
+Before you begin, make sure you have:
+
+| Requirement | Version | Why |
+|----|----|----|
+| [Docker Desktop](https://docs.docker.com/get-docker/) | 4.0+ | Runs all agent containers and Ollama |
+| [Python](https://www.python.org/downloads/) | 3.11+ | Runs the local orchestrator script |
+| Free RAM | ~4GB minimum | Ollama needs memory for the LLM model |
+| Free Disk | ~5GB | For Docker images + Ollama model weights |
+
+---
 
 ## Installation
 
-### 1. Clone the Repository
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/your-org/acp-skilled-worker.git
 cd acp-skilled-worker
 ```
 
-### 2. Create Your Environment File
+### 2. Set up the environment file
 
 ```bash
 cp .env.example .env
 ```
 
-The `.env` file controls which Ollama model all agents use. The default is `llama3.2` (a good balance of speed and quality). Edit it if you want a different model:
+The `.env` file controls which Ollama model all agents use:
 
 ```
 OLLAMA_MODEL=llama3.2
 ```
 
-**Model options:**
-| Model | Size | Speed | Quality | Best For |
+**Available models:**
+
+| Model | Download Size | Speed | Quality | Best For |
 |---|---|---|---|---|
-| `llama3.2:1b` | ~1.3GB | Fast | Lower | Quick testing, low-RAM machines |
-| `llama3.2` | ~3.8GB | Medium | Good | Default, general use |
-| `llama3.1:8b` | ~4.7GB | Slower | Better | Higher quality output |
+| `llama3.2:1b` | ~1.3 GB | Fast | Lower | Quick testing, low-RAM machines |
+| `llama3.2` | ~3.8 GB | Medium | Good | **Default — recommended** |
+| `llama3.1:8b` | ~4.7 GB | Slower | Better | Higher quality output |
 
-### 3. Install the Orchestrator Dependency
-
-The local orchestrator needs one Python package:
-
-```bash
-pip install httpx
-```
-
-Or if you use a virtual environment:
+### 3. Set up the local orchestrator
 
 ```bash
 python -m venv venv
-source venv/bin/activate   # macOS/Linux
+source venv/bin/activate   # macOS / Linux
 # venv\Scripts\activate    # Windows
-pip install httpx
+
+pip install -r requirements.txt
 ```
 
-That's it — Docker handles all other dependencies inside the containers.
+---
 
-## Running
+## Running the Pipeline
 
-### Step 1: Start All Services
+### Step 1 — Start all services
 
 ```bash
-docker compose up --build
+docker compose up --build -d
 ```
 
-First run will take a few minutes to build the container images. Subsequent runs are fast.
+> First run builds all container images (~2-3 minutes). Subsequent starts are near-instant.
 
-This launches 6 containers:
-
-| Service | Port | Description |
-|---|---|---|
-| `ollama` | 11434 | Local LLM server |
-| `ollama-proxy` | 8080 | Request queue/serializer |
-| `topic-scout` | 8001 | RSS feed scanner + topic ranker |
-| `summarizer` | 8002 | Article summarizer |
-| `sentiment-analyzer` | 8003 | Sentiment classifier + theme extractor |
-| `editor` | 8004 | Report assembler |
-
-Wait until you see all services report as healthy. You can verify with:
+Verify everything is healthy:
 
 ```bash
 docker compose ps
 ```
 
-All services should show `Up` and `healthy`.
+Expected output — all services show **Up** and **healthy**:
 
-### Step 2: Pull a Model into Ollama
+```
+NAME                      STATUS
+ollama-1                  Up (healthy)
+ollama-proxy-1            Up (healthy)
+topic-scout-1             Up
+summarizer-1              Up
+sentiment-analyzer-1      Up
+editor-1                  Up
+```
 
-On first run only — you need to download the LLM model:
+### Step 2 — Download the LLM model
+
+> **This step is required before your first run.** Without a model, the pipeline will complete but produce an empty report.
 
 ```bash
 docker compose exec ollama ollama pull llama3.2
 ```
 
-This downloads the model (~3.8GB). You only need to do this once; the model is persisted in a Docker volume.
+This downloads ~3.8 GB. You only need to do this **once** — the model is persisted in a Docker volume across restarts.
 
-### Step 3: Run the Pipeline
+Confirm the model is ready:
 
-Open a **separate terminal** (keep Docker Compose running in the first one):
+```bash
+docker compose exec ollama ollama list
+```
+
+You should see `llama3.2` (or whichever model you configured in `.env`).
+
+### Step 3 — Run the pipeline
 
 ```bash
 python orchestrate.py
 ```
 
-You'll see the orchestrator call each agent in sequence:
+Output:
 
 ```
 ============================================================
@@ -184,69 +237,90 @@ You'll see the orchestrator call each agent in sequence:
 ============================================================
 ```
 
-The full pipeline takes 2-5 minutes depending on your hardware and model size.
+The full pipeline takes **2-5 minutes** depending on your hardware and model.
 
-### Step 4: Read the Report
+### Step 4 — Read your briefing
 
 ```bash
 cat output/ai-news-briefing-*.md
 ```
 
-Or open the file in any Markdown viewer. Reports are saved with the date in the filename so they don't overwrite each other.
+Or open the file in any Markdown viewer/editor. Reports include the date in the filename so they accumulate without overwriting.
 
-### Stopping
+### Stopping the services
 
 ```bash
-# Stop all services (Ctrl+C in the docker compose terminal, or):
+# Stop all containers:
 docker compose down
 
-# Stop and remove the Ollama model data too:
+# Stop and delete the downloaded model (frees ~4 GB):
 docker compose down -v
 ```
+
+---
 
 ## Project Structure
 
 ```
 acp-skilled-worker/
-├── docker-compose.yml          # All services in one file
-├── orchestrate.py              # Local CLI that drives the pipeline
-├── requirements.txt            # Orchestrator dependencies (httpx)
-├── .env.example                # Model configuration template
-├── output/                     # Generated briefing reports
-└── services/
-    ├── ollama-proxy/           # FastAPI proxy with async queue
-    │   ├── proxy.py
-    │   ├── Dockerfile
-    │   └── requirements.txt
-    ├── topic-scout/            # ACP agent: RSS → trending topics
-    │   ├── agent.py
-    │   ├── Dockerfile
-    │   └── requirements.txt
-    ├── summarizer/             # ACP agent: articles → summaries
-    │   ├── agent.py
-    │   ├── Dockerfile
-    │   └── requirements.txt
-    ├── sentiment-analyzer/     # ACP agent: text → sentiment + themes
-    │   ├── agent.py
-    │   ├── Dockerfile
-    │   └── requirements.txt
-    └── editor/                 # ACP agent: all data → final report
-        ├── agent.py
-        ├── Dockerfile
-        └── requirements.txt
+│
+├── docker-compose.yml            # Defines all 6 services and networking
+├── orchestrate.py                # Local CLI — drives the agent pipeline
+├── requirements.txt              # Python dependencies for the orchestrator
+├── .env.example                  # Template for model configuration
+│
+├── services/
+│   ├── ollama-proxy/             # Request serializer for Ollama
+│   │   ├── proxy.py              # FastAPI app with semaphore-based queue
+│   │   ├── Dockerfile
+│   │   └── requirements.txt
+│   │
+│   ├── topic-scout/              # Agent: RSS feeds → ranked AI topics
+│   │   ├── agent.py              # ACP agent using @server.agent()
+│   │   ├── Dockerfile
+│   │   └── requirements.txt
+│   │
+│   ├── summarizer/               # Agent: articles → concise summaries
+│   │   ├── agent.py
+│   │   ├── Dockerfile
+│   │   └── requirements.txt
+│   │
+│   ├── sentiment-analyzer/       # Agent: text → sentiment + themes
+│   │   ├── agent.py
+│   │   ├── Dockerfile
+│   │   └── requirements.txt
+│   │
+│   └── editor/                   # Agent: all data → Markdown report
+│       ├── agent.py
+│       ├── Dockerfile
+│       └── requirements.txt
+│
+└── output/                       # Generated briefing reports land here
 ```
+
+---
 
 ## Configuration
 
-| Environment Variable | Default | Description |
+All configuration is through environment variables in `.env`:
+
+| Variable | Default | Description |
 |---|---|---|
-| `OLLAMA_MODEL` | `llama3.2` | Ollama model used by all agents |
-| `OLLAMA_URL` | `http://ollama:11434` | Ollama server URL (proxy config) |
-| `REQUEST_TIMEOUT` | `120` | Proxy timeout per request in seconds |
+| `OLLAMA_MODEL` | `llama3.2` | The Ollama model all agents use for inference |
+
+These are set internally in `docker-compose.yml` and generally don't need changing:
+
+| Variable | Default | Description |
+|---|---|---|
+| `OLLAMA_URL` | `http://ollama:11434` | Ollama server URL (used by the proxy) |
+| `OLLAMA_PROXY_URL` | `http://ollama-proxy:8080` | Proxy URL (used by agents) |
+| `REQUEST_TIMEOUT` | `120` | Max seconds per Ollama request |
+
+---
 
 ## GPU Support
 
-To enable GPU acceleration for Ollama, uncomment the GPU section in `docker-compose.yml`:
+By default, Ollama runs on CPU. To enable GPU acceleration (NVIDIA only), uncomment the deploy section in `docker-compose.yml` under the `ollama` service:
 
 ```yaml
 deploy:
@@ -258,29 +332,128 @@ deploy:
           capabilities: [gpu]
 ```
 
+This requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
+
+For Apple Silicon Macs, Ollama uses Metal acceleration automatically — no configuration needed.
+
+---
+
 ## Interacting with Agents Directly
 
-Each agent exposes ACP endpoints. You can call them independently:
+Each agent exposes standard ACP endpoints. You can call them independently without the orchestrator.
+
+**List available agents:**
 
 ```bash
-# List agents on the topic-scout service
-curl http://localhost:8001/agents
+curl -s http://localhost:8001/agents | python -m json.tool
+```
 
-# Run the topic scout manually
-curl -X POST http://localhost:8001/runs \
+**Run an agent manually:**
+
+```bash
+curl -s -X POST http://localhost:8001/runs \
   -H "Content-Type: application/json" \
   -d '{
     "agent_name": "topic_scout",
-    "input": [{"role": "user", "parts": [{"content": "{}", "content_type": "application/json"}]}]
-  }'
+    "input": [{
+      "role": "user",
+      "parts": [{"content": "{}", "content_type": "application/json"}]
+    }]
+  }' | python -m json.tool
 ```
+
+**Agent endpoints reference:**
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/agents` | GET | List registered agents and their metadata |
+| `/runs` | POST | Create a new run (execute an agent) |
+| `/runs/{run_id}` | GET | Check the status of a run |
+
+---
 
 ## Troubleshooting
 
-**Ollama is slow or OOM:** Try a smaller model (`llama3.2:1b`) or increase Docker's memory limit.
+### Pipeline completes but the report is empty
 
-**Agents can't connect to proxy:** Ensure `docker compose up` shows all services healthy. Check with `docker compose ps`.
+The model is not loaded. Run:
 
-**RSS feeds return no articles:** The Topic Scout uses public RSS feeds that may rate-limit. Wait a few minutes and retry.
+```bash
+docker compose exec ollama ollama list
+```
 
-**Model not found:** Make sure you pulled the model: `docker compose exec ollama ollama pull llama3.2`
+If no models are listed, pull one:
+
+```bash
+docker compose exec ollama ollama pull llama3.2
+```
+
+### `Connection refused` when running the orchestrator
+
+The Docker services aren't running. Start them:
+
+```bash
+docker compose up --build -d
+docker compose ps   # verify all are healthy
+```
+
+### Agents crash with `LoopSetupType` error
+
+Version mismatch between `acp-sdk` and `uvicorn`. The agent `requirements.txt` files pin `uvicorn<0.34.0` to prevent this. If you see this error, rebuild:
+
+```bash
+docker compose build --no-cache
+docker compose up -d
+```
+
+### Ollama is slow or runs out of memory
+
+- Switch to a smaller model: set `OLLAMA_MODEL=llama3.2:1b` in `.env` and restart
+- Increase Docker Desktop memory: Settings > Resources > Memory (recommend 6 GB+)
+- Enable GPU support (see [GPU Support](#gpu-support))
+
+### RSS feeds return no articles
+
+The Topic Scout uses public RSS feeds (ArXiv, Google News) that may rate-limit or block requests from certain networks. Check the logs:
+
+```bash
+docker compose logs topic-scout --tail=30
+```
+
+If feeds show `entries: 0`, the feeds may be temporarily unavailable. Wait a few minutes and retry.
+
+### Viewing agent logs
+
+```bash
+# All services:
+docker compose logs -f
+
+# Specific service:
+docker compose logs -f topic-scout
+docker compose logs -f ollama-proxy
+```
+
+---
+
+## How ACP Works
+
+[ACP (Agent Communication Protocol)](https://agentcommunicationprotocol.dev/) is an open standard for AI agent interoperability. Key concepts used in this project:
+
+- **Agents** are registered with the `@server.agent()` decorator from `acp-sdk`
+- **Runs** represent a single execution of an agent — created via `POST /runs`
+- **Messages** carry structured data between agents using typed parts (JSON, Markdown, plain text)
+- **Discovery** happens via `GET /agents`, which returns metadata about available agents
+
+Each agent in this project is a standalone HTTP service. The orchestrator doesn't import any agent code — it communicates purely through ACP's REST API. This means agents can be written in any language, swapped out independently, or scaled horizontally.
+
+**Learn more:**
+- [ACP Documentation](https://agentcommunicationprotocol.dev/introduction/welcome)
+- [ACP Quickstart](https://agentcommunicationprotocol.dev/introduction/quickstart)
+- [acp-sdk on PyPI](https://pypi.org/project/acp-sdk/)
+- [ACP GitHub](https://github.com/i-am-bee/acp)
+
+---
+
+## License
+
+This project is for personal learning and exploration. See [LICENSE](LICENSE) for details.

@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 app = FastAPI(title="Ollama Queue Proxy")
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
-REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "120"))
+REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "300"))
 
 # Semaphore ensures only one request hits Ollama at a time
 _semaphore = asyncio.Semaphore(1)

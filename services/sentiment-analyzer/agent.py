@@ -28,7 +28,7 @@ Return a JSON object with:
 
 Return ONLY valid JSON, no other text."""
 
-    async with httpx.AsyncClient(base_url=OLLAMA_PROXY_URL, timeout=120) as client:
+    async with httpx.AsyncClient(base_url=OLLAMA_PROXY_URL, timeout=300) as client:
         response = await client.post("/api/generate", json={
             "model": OLLAMA_MODEL,
             "prompt": prompt,
@@ -84,4 +84,4 @@ async def sentiment_analyzer(
     )
 
 
-server.run(port=8000)
+server.run(host="0.0.0.0", port=8000)

@@ -14,7 +14,7 @@ AGENT_URLS = {
     "editor": "http://localhost:8004",
 }
 
-TIMEOUT = 180
+TIMEOUT = 600
 
 
 def call_agent(agent_name: str, input_content: str, content_type: str = "application/json") -> str:
